@@ -9,6 +9,7 @@
 #creates a plot, time vs tput
 #emrea, July 2021
 #add option to parse files collected without -P flag, Aug 2023
+#add Gbps parsing option which was missing, seems will be necessary as of Wifi6, Wifi7, 10G technology, Oct 2023
 
 import os
 import re
@@ -28,9 +29,9 @@ tput_regex_noP = r"\[.+\].+(?:(?:M|G|)Bytes)+\s+(\d+.\d+).+(?:(?:M|G|)bits\/sec\
 #update to catch in DL direction in which result followed by retry column (i think this happen in Linux versions of iperf3)
 
 #this is to catch if unit is bits/sec, or Kbits/sec or Mbits/sec, normally it should be Mbits/sec, however rarely it may occurs in other way, in this case calculate Mbits/sec
-unit_regex = r"\[SUM\].+(?:(?:M|G|)Bytes)+\s+\d+.\d+.+(M|K)bits\/sec\s+(?:\d+|)\s+$"
+unit_regex = r"\[SUM\].+(?:(?:M|G|)Bytes)+\s+\d+.\d+.+(G|M|K)bits\/sec\s+(?:\d+|)\s+$"
 #when -P flag is not used (single stream)
-unit_regex_noP = r"\[.+\].+(?:(?:M|G|)Bytes)+\s+\d+.\d+.+(M|K)bits\/sec\s+(?:\d+|)\s+$"
+unit_regex_noP = r"\[.+\].+(?:(?:M|G|)Bytes)+\s+\d+.\d+.+(G|M|K)bits\/sec\s+(?:\d+|)\s+$"
 
 
 infile_ext = ".txt" #iperf results txt
@@ -44,6 +45,8 @@ def parseIperfOutput(file, tput_re, unit_re):
     hit = 0 #total regex hit
     K_hit = 0 #hit for non-M, Kbits/sec hits
     b_hit = 0 #hit for non-M, bits/sec hits
+    M_hit =0
+    G_hit = 0 #hit for non-M, Gbits/sec hits
     tput_results = []
     for line in file:
             result = re.findall(tput_re, line)
@@ -52,7 +55,12 @@ def parseIperfOutput(file, tput_re, unit_re):
                 unit = re.findall(unit_re, line)
                 if unit:
                     if unit[0] == "M": #Mbits/sec, expected unit
+                        M_hit = M_hit+1
                         tput_results.append(result[0].replace(".", ",")) #replace dot with coma, for excel calculations
+                    elif unit[0] == "G": #Mbits/sec, expected unit
+                        G_hit = G_hit+1
+                        value = float(result[0])*1024 #ie 1.12 Gbits/sec, convert to Mbps
+                        tput_results.append(str(value).replace(".", ",")) #replace dot with coma, for excel calculations
                     else: #Kbits/sec
                         K_hit = K_hit+1
                         value = float(result[0])/1024 #these calculations introduce some error compared original iperf value, i couldn't figure out why?
@@ -62,7 +70,7 @@ def parseIperfOutput(file, tput_re, unit_re):
                      value = float(result[0])/(1024*1024)
                      tput_results.append(str(value).replace(".", ","))
 
-    return tput_results, hit, K_hit, b_hit
+    return tput_results, hit, K_hit, b_hit, G_hit, M_hit
 
 
 if __name__ == "__main__":
@@ -74,21 +82,21 @@ if __name__ == "__main__":
         if fileName.endswith(infile_ext):
             print("Parsing file: %s" % fileName)
             file = open(os.path.join(dirPath,fileName), 'r')
-            tput_results, hit, K_hit, b_hit = parseIperfOutput(file, tput_regex, unit_regex)
+            tput_results, hit, K_hit, b_hit, G_hit, M_hit = parseIperfOutput(file, tput_regex, unit_regex)
             
             if (hit==0 and K_hit==0 and b_hit==0):
                 print("Seems no hit in %s, probably collected without -P flag, researching..." % fileName)
                 file.seek(0) #go to begging of file, since already reach EOF
-                tput_results, hit, K_hit, b_hit = parseIperfOutput(file, tput_regex_noP, unit_regex_noP)
+                tput_results, hit, K_hit, b_hit, G_hit, M_hit = parseIperfOutput(file, tput_regex_noP, unit_regex_noP)
             
-            print("Number of total hits: %s, Kbits/sec hits: %s, bits/sec hits: %s\n" %(hit, K_hit, b_hit))
+            print("Number of total hits: %s, Gbits/sec: %s, Mbits/sec: %s, Kbits/sec hits: %s, bits/sec hits: %s\n" %(hit, G_hit, M_hit, K_hit, b_hit))
             file.close()
             
             #write results to csv file
             outfname = fileName.replace(infile_ext, outfile_ext)
             file = open(os.path.join(dirPath,outfname), 'w')        
             
-            file.write(";;Results Count;%s;Kbps Count;%s;bps Count;%s\n" %(hit, K_hit, b_hit))
+            file.write(";;Results Count;%s;Gbps Count;%s;Mbps Count;%s;Kbps Count;%s;bps Count;%s\n" %(hit, G_hit, M_hit, K_hit, b_hit))
             file.write("sec;tput(Mbps);avr(Mbps);=average(B:B);min;=min(B:B);max;=max(B:B);stdev;=stdev.s(B:B)\n")
             sec = i
             secs = []
